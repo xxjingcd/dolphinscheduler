@@ -33,9 +33,9 @@ spring:
       spec: maximumSize=100,expireAfterWrite=300s,recordStats
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://hdp004:5432/dolphin_community?currentSchema=version4
-    username: postgres
-    password: PT@zero2022
+    url: jdbc:postgresql://#{dbHost}:#{dbPort}/dolphin_community?currentSchema=version4
+    username: #{dbUsername}
+    password: #{dbPassword}
     hikari:
       connection-test-query: select 1
       minimum-idle: 5
@@ -72,8 +72,8 @@ spring:
 registry:
   type: zookeeper
   zookeeper:
-    namespace: dolphin_community
-    connect-string: hdp001:2191,hdp002:2191,hdp003:2191
+    namespace: #{zkNameSpace}
+    connect-string: #{zKConnectStr}
     retry-policy:
       base-sleep-time: 60ms
       max-sleep: 300ms

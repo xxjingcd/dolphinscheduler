@@ -1,0 +1,175 @@
+
+pipeline{
+
+    parameters{
+        //choice(name: 'deployEnv', choices: ['dev', 'test', 'prod'], description: '选择部署环境，分别为开发、测试、预生产')
+        booleanParam(name: 'runTests', defaultValue: false, description: '是否运行单元测试')
+        booleanParam(name: 'runQualityCheck', defaultValue: false, description: '是否运行代码质量检测')
+        //booleanParam(name: 'forceDeploy', defaultValue: false, description: '是否强制部署（默认是不允许部署功能、任务、bug修复分支；有特殊需求可以勾选）')
+        //booleanParam(name: 'publish', defaultValue: false, description: '是否发布本次构建的版本包（必须是在预生产环境上构建的包才能进行发布）')
+    }
+
+    agent {
+      // params.deployEnv
+        label 'prod'
+    }
+
+    environment {
+        PROJECT_NAME = 'DW-Dolphin'
+        PROJECT_SONAR_KEY = 'DW-Dolphin'
+        MAVEN_HOME = "/usr/local/maven/apache-maven-3.8.1/bin"
+        SONARQUBE_URL = "http://node-3:9100"
+        SONARQUBE_TOKEN = "ea850bd12488d320ec3c6af50a97821921eaf346"
+    }
+
+    stages{
+        stage('Init & Compile'){
+            parallel {
+                stage("init config"){
+                    steps {
+                        script {
+                            //配置文件生成
+                            sh "rm -rf ./conf"
+                            //sh "echo ${params.deployEnv}"
+                            //sh "sh ./dtsw/CI/script/generate_config_file.sh ${params.deployEnv} ./conf"
+                            sh "sh ./dtsw/CI/script/generate_config_file.sh prod ./conf"
+                            //sql脚本更新 ${params.deployEnv}
+                            //sh "sh ./dtsw/CI/script/sql-upgrade.sh prod ./dtsw/sql/upgrade/dwdolphin_upgrade.sql"
+                            //配置文件更新
+                            sh "rm -f dolphinscheduler-api/src/main/resources/application.yaml; cp ./conf/application-api.yaml dolphinscheduler-api/src/main/resources/application.yaml"
+                            sh "rm -f dolphinscheduler-master/src/main/resources/application.yaml; cp ./conf/application-master.yaml dolphinscheduler-master/src/main/resources/application.yaml"
+                            sh "rm -f dolphinscheduler-worker/src/main/resources/application.yaml; cp ./conf/application-worker.yaml dolphinscheduler-worker/src/main/resources/application.yaml"
+                            sh "rm -f dolphinscheduler-alert/dolphinscheduler-alert-server/src/main/resources/application.yaml; cp ./conf/application-alert.yaml dolphinscheduler-alert/dolphinscheduler-alert-server/src/main/resources/application.yaml"
+                            sh "rm -f dolphinscheduler-common/src/main/resources/common.properties; cp ./conf/common.properties dolphinscheduler-common/src/main/resources/common.properties"
+                            //日志文件更新
+                            sh "rm -f dolphinscheduler-api/src/main/resources/logback-spring.xml; cp ./dtsw/CI/log_conf/logback-api.xml dolphinscheduler-api/src/main/resources/logback-spring.xml"
+                            sh "rm -f dolphinscheduler-master/src/main/resources/logback-spring.xml; cp ./dtsw/CI/log_conf/logback-master.xml dolphinscheduler-master/src/main/resources/logback-spring.xml"
+                            sh "rm -f dolphinscheduler-worker/src/main/resources/logback-spring.xml; cp ./dtsw/CI/log_conf/logback-worker.xml dolphinscheduler-worker/src/main/resources/logback-spring.xml"
+                            sh "rm -f dolphinscheduler-alert/dolphinscheduler-alert-server/src/main/resources/logback-spring.xml; cp ./dtsw/CI/log_conf/logback-alert.xml dolphinscheduler-alert/dolphinscheduler-alert-server/src/main/resources/logback-spring.xml"
+                            //环境变量文件
+                            //sh "rm -f script/env/install_env.sh; cp ./dtsw/CI/env/${params.deployEnv}/install_env.sh ./script/env"
+                            sh "rm -f script/env/install_env.sh; cp ./dtsw/CI/env/prod/install_env.sh ./script/env"
+                            sh "rm -f script/env/dolphinscheduler_env.sh; cp ./dtsw/CI/env/dolphinscheduler_env.sh ./script/env"
+                        }
+                    }
+                }
+                stage("Compile"){
+                    steps{
+                        sh "${MAVEN_HOME}/mvn -f pom.xml clean compile"
+                    }
+                }
+            }
+        }
+
+        stage('Unit Test'){
+        when { expression { return params.runTests} }
+            steps{
+                echo "Starting Unit Test......"
+                echo "注入jacoco插件配置,clean test执行单元测试代码. 将结果上传到将SonarQaue."
+
+                sh "${MAVEN_HOME}/mvn test org.jacoco:jacoco-maven-plugin:0.8.7:restore-instrumented-classes org.jacoco:jacoco-maven-plugin:0.8.7:report -Dmaven.test.failure.ignore=true -Dmaven.test.skip=false"
+                junit  testResults: '**/target/surefire-reports/*.xml', skipPublishingChecks: true
+
+                echo "配置单元测试覆盖率要求，未达到要求pipeline将会fail,code coverage.LineCoverage>80%. 作用为将结果打印到jenkins 中，通过 jenkins jacoco plugin "
+                /*jacoco changeBuildStatus: true, maximumLineCoverage:"80"*/
+                jacoco(
+                        buildOverBuild: false,
+                        changeBuildStatus: true,
+                        classPattern: '**/target/classes',
+                        //代码覆盖率统计文件位置
+                        execPattern: '**/target/*.exec',
+                        sourcePattern: '**/src/main/java',
+                        //排除分析文件位置
+                        exclusionPattern: '**/src/test/**,**/entity/**,**/bo/**,**/ioc/**,**/command/**,**/controller/**,**/common/**,**/enums/**,**/exceptions/**,**/config/**,**/enums/**,**/dto/**,**/controller/**',
+                        minimumMethodCoverage: '30',
+                        maximumMethodCoverage: '55',
+                        minimumClassCoverage: '30',
+                        maximumClassCoverage: '55',
+                        minimumLineCoverage: '20',
+                        maximumLineCoverage: '55'
+                )
+            }
+        }
+
+        stage("Code Quality & upload report"){
+            when {
+                allOf { equals expected: true, actual: params.runQualityCheck; expression { return params.runTests}}
+            }
+            steps {
+                echo "satrting code quality check，and uplaod  quality & unit test report"
+
+                script {
+                    withSonarQubeEnv('sonarqube8.9') {
+                        sh "${MAVEN_HOME}/mvn -f pom.xml -pl !dolphinscheduler-ui -pl !dolphinscheduler-standalone-server sonar:sonar -Dsonar.host.url=${SONARQUBE_URL} -Dsonar.login=${SONARQUBE_TOKEN} -Dsonar.branch.name=${env.BRANCH_NAME} -Dsonar.projectName=${env.PROJECT_NAME} -Dsonar.projectKey=${env.PROJECT_SONAR_KEY}"
+                    }
+                    timeout(10) {
+                        waitForQualityGate abortPipeline: true
+                    }
+                }
+            }
+        }
+
+        stage('Package'){
+//             when { anyOf { branch pattern: "^release-*[^-]*\$|dev|master" , comparator: "REGEXP"; expression { return params.forceDeploy}}}
+            steps {
+                sh "${MAVEN_HOME}/mvn package -Prelease -Dmaven.test.skip=true -Dmaven.javadoc.skip=true"
+            }
+        }
+
+        stage('Deploy'){
+//             when { anyOf { branch pattern: "^release-*[^-]*\$|dev|master" , comparator: "REGEXP"; expression { return params.forceDeploy}}}
+            steps {
+                sh "tar -zxvf dolphinscheduler-dist/target/apache-dolphinscheduler-3.1.4-SNAPSHOT-bin.tar.gz"
+                sh "cd apache-dolphinscheduler-3.1.4-SNAPSHOT-bin/bin && sudo sh install.sh"
+            }
+        }
+
+/*         stage('Publish'){
+            when {
+                allOf { equals expected: true, actual: params.publish;
+                equals expected: "prod", actual: params.deployEnv}
+            }
+            steps{
+                sh "scp dolphinscheduler-dist/target/apache-dolphinscheduler-3.0.0-beta-1-bin.tar.gz node-2:/var/www/html/kodexplorer/data/Group/public/home/文档/项目/4.D-Dolphin"
+            }
+        } */
+
+ /*        stage('通知人工验收') {
+            when { anyOf { branch pattern: "^release-*[^-]*\$|dev|master" , comparator: "REGEXP"; expression { return params.forceDeploy }}}
+            steps {
+                // 微信
+                sh "python3 ./dtsw/CI/script/wecom_notice.py ${env.PROJECT_NAME} ${env.BRANCH_NAME} ${env.BUILD_URL} ${params.deployEnv} build_stop"
+
+                echo "项目dtsw-dolphinscheduler的${env.BRANCH_NAME}构建完成。Pipeline '${JOB_NAME}' (${BUILD_NUMBER})进入人工验收环节\\n请及时前往${env.BUILD_URL}进行测试验收。当前构建环境：${params.deployEnv}"
+            }
+        } */
+
+    }
+
+
+    post {
+        always {
+            echo 'One way or another, I have finished'
+        }
+        success {
+            echo 'I succeeeded!'
+        }
+        unstable {
+            echo 'I am unstable :/'
+        }
+        failure {
+            echo 'I failed '
+          /*   script {
+                if (env.API_TEST_IS_SUCCESS == 'True') {
+                    sh "python3 ./dtsw/CI/script/wecom_notice.py ${env.PROJECT_NAME} ${env.BRANCH_NAME} ${env.BUILD_URL} ${params.deployEnv}  build_fail"
+                } else {
+                    sh "python3 ./dtsw/CI/script/wecom_notice.py ${env.PROJECT_NAME} ${env.BRANCH_NAME} ${env.BUILD_URL} ${params.deployEnv} build_fail"
+                }
+            } */
+        }
+        changed {
+            echo 'Things were different before...'
+        }
+    }
+
+}

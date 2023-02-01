@@ -24,8 +24,8 @@ spring:
 registry:
   type: zookeeper
   zookeeper:
-    namespace: dolphin_community
-    connect-string: hdp001:2191,hdp002:2191,hdp003:2191
+    namespace: #{zkNameSpace}
+    connect-string: #{zKConnectStr}
     retry-policy:
       base-sleep-time: 60ms
       max-sleep: 300ms

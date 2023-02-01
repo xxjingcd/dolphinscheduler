@@ -41,9 +41,9 @@ spring:
     basename: i18n/messages
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://hdp004:5432/dolphin_community?currentSchema=version4
-    username: postgres
-    password: PT@zero2022
+    url: jdbc:postgresql://#{dbHost}:#{dbPort}/dolphin_community?currentSchema=version4
+    username: #{dbUsername}
+    password: #{dbPassword}
     hikari:
       connection-test-query: select 1
       minimum-idle: 5
@@ -107,8 +107,8 @@ management:
 registry:
   type: zookeeper
   zookeeper:
-    namespace: dolphin_community
-    connect-string: hdp001:2191,hdp002:2191,hdp003:2191
+    namespace: #{zkNameSpace}
+    connect-string: #{zKConnectStr}
     retry-policy:
       base-sleep-time: 60ms
       max-sleep: 300ms
@@ -175,10 +175,10 @@ traffic:
     max-global-qps-rate: 300
     tenant-switch: false
     default-tenant-qps-rate: 10
-    #customize-tenant-qps-rate:
+      #customize-tenant-qps-rate:
       # eg.
       #tenant1: 11
-      #tenant2: 20
+    #tenant2: 20
 
 
 # Override by profile
